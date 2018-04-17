@@ -171,177 +171,175 @@ class SPMReporter extends MetricReporter {
   private def buildRequestBody(snapshot: PeriodSnapshot): Array[Byte] = {
     val timestamp: Long = (snapshot.from.toEpochMilli)
 
-    val histograms = (snapshot.metrics.histograms ++ snapshot.metrics.rangeSamplers).map { metric ⇒
-      Map("body" -> {
-        val min = convert(metric.unit, metric.distribution.min)
-        val max = convert(metric.unit, metric.distribution.max)
-        val sum = convert(metric.unit, metric.distribution.sum)
-        val p50 = convert(metric.unit, metric.distribution.percentile(50D).value)
-        val p90 = convert(metric.unit, metric.distribution.percentile(90D).value)
-        val p95 = convert(metric.unit, metric.distribution.percentile(95D).value)
-        val p99 = convert(metric.unit, metric.distribution.percentile(99D).value)
-        val p995 = convert(metric.unit, metric.distribution.percentile(99.5D).value)
-        s"${prefix(metric, timestamp)}\t${min}\t${max}\t${sum}\t${metric.distribution.count}\t${p50}\t${p90}\t${p95}\t${p99}\t${p995}"
+    val histograms = (snapshot.metrics.histograms ++ snapshot.metrics.rangeSamplers).map { metric ⇒ {
+      val metrisString = buildHistograms(metric)
+      if (metrisString != null && metrisString.length > 0) {
+        prefix().concat(metrisString).concat(" ").concat(timestamp.toString).concat("000000").trim.replaceAll(" +", " ")
+      } else {
+        ""
       }
-      ).toJson
+    }
     }.toList
 
-    val counters = (snapshot.metrics.counters).map { metric ⇒
-      Map("body" -> {
-        metric.name match {
-          case "host.file-system.activity" => getTagOrEmptyString(metric.tags, "operation") match {
-            case "read" => s"${timestamp}\t${"system-metric-file-system-reads"}\t${timestamp}\tfile-system\t0\t0\t${metric.value}\t0"
-            case "write" => s"${timestamp}\t${"system-metric-file-system-writes"}\t${timestamp}\tfile-system\t0\t0\t${metric.value}\t0"
-            case _ => defaultMetricString(timestamp, metric.name)
-          }
-          case "executor.tasks" => getTagOrEmptyString(metric.tags, "state") match {
-            case "completed" => s"${timestamp}\t${"akka-dispatcher-processed-tasks"}\t${timestamp}\t\t0\t0\t${metric.value}\t0"
-            case _ => defaultMetricString(timestamp, metric.name)
-          }
-          case "host.network.packets" => {
-            if (metric.tags.contains("state")) {
-              getTagOrEmptyString(metric.tags, "state") match {
-                case "error" => {
-                  getTagOrEmptyString(metric.tags, "direction") match {
-                    case "transmitted" => s"${timestamp}\t${"system-metric-tx-errors"}\t${timestamp}\t\t0\t0\t0\t${metric.value}"
-                    case "received" => s"${timestamp}\t${"system-metric-rx-errors"}\t${timestamp}\t\t0\t0\t0\t${metric.value}"
-                    case _ => defaultMetricString(timestamp, metric.name)
-                  }
-                }
-                case "dropped" => {
-                  getTagOrEmptyString(metric.tags, "direction") match {
-                    case "transmitted" => s"${timestamp}\t${"system-metric-tx-dropped"}\t${timestamp}\t\t0\t0\t0\t${metric.value}"
-                    case "received" => s"${timestamp}\t${"system-metric-rx-dropped"}\t${timestamp}\t\t0\t0\t0\t${metric.value}"
-                    case _ => defaultMetricString(timestamp, metric.name)
-                  }
-                }
-                case _ => defaultMetricString(timestamp, metric.name)
-              }
-            } else {
-              getTagOrEmptyString(metric.tags, "direction") match {
-                case "transmitted" => s"${timestamp}\t${"system-metric-tx-bytes"}\t${timestamp}\t\t0\t0\t${metric.value}\t0"
-                case "received" => s"${timestamp}\t${"system-metric-rx-bytes"}\t${timestamp}\t\t0\t0\t${metric.value}\t0"
-                case _ => defaultMetricString(timestamp, metric.name)
-              }
-            }
-          }
-          case _ => {
-            if (metric.tags.contains(customMarker)) {
-              s"${timestamp}\t${"counter-counter"}\t${timestamp}\t${metric.name}\t${metric.value}"
-            } else {
-              s"${prefix(metric, timestamp)}\t${convert(metric.unit, metric.value)}"
-            }
-          }
-        }
+    val counters = (snapshot.metrics.counters).map { metric ⇒ {
+      val metrisString = buildCounters(metric)
+      if (metrisString != null && metrisString.length > 0) {
+        prefix().concat(metrisString).concat(" ").concat(timestamp.toString).concat("000000").trim.replaceAll(" +", " ")
+      } else {
+        ""
       }
-      ).toJson
+    }
     }.toList
 
-    val gauges = (snapshot.metrics.gauges).map { metric ⇒
-      Map("body" -> {
-        metric.name match {
-          case "executor.pool" => getTagOrEmptyString(metric.tags, "setting") match {
-            case "parallelism" => s"${timestamp}\t${"akka-dispatcher-parallelism"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "name")}\t0\t0\t${convert(metric.unit, metric.value)}\t0"
-            case "min" => s"${timestamp}\t${"akka-dispatcher-min-pool-size"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "name")}\t${convert(metric.unit, metric.value)}\t0\t0\t0"
-            case "max" => s"${timestamp}\t${"akka-dispatcher-max-pool-size"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "name")}\t${convert(metric.unit, metric.value)}\t0\t0"
-            case "corePoolSize" => s"${timestamp}\t${"akka-dispatcher-core-pool-size"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "name")}\t${convert(metric.unit, metric.value)}\t0\t0\t0"
-            case _ => defaultMetricString(timestamp, metric.name)
-          }
-          case "jvm.class-loading" => {
-            getTagOrEmptyString(metric.tags, "mode") match {
-              case "currently-loaded" => s"${timestamp}\t${"system-metric-classes-currently-loaded"}\t${timestamp}\t\t0\t${metric.value}\t0\t0"
-              case "unloaded" => s"${timestamp}\t${"system-metric-classes-unloaded"}\t${timestamp}\t\t0\t${metric.value}\t0\t0"
-              case "loaded" => s"${timestamp}\t${"system-metric-classes-loaded"}\t${timestamp}\t\t0\t${metric.value}\t0\t0"
-              case _ => defaultMetricString(timestamp, metric.name)
-            }
-          }
-          case "jvm.threads" => getTagOrEmptyString(metric.tags, "measure") match {
-            case "daemon" => s"${timestamp}\t${"system-metric-daemon-thread-count"}\t${timestamp}\t\t0\t0\t${metric.value}\t1"
-            case "peak" => s"${timestamp}\t${"system-metric-peak-thread-count"}\t${timestamp}\t\t0\t0\t${metric.value}\t1"
-            case "total" => s"${timestamp}\t${"system-metric-thread-count"}\t${timestamp}\t\t0\t0\t${metric.value}\t1"
-            case _ => defaultMetricString(timestamp, metric.name)
-          }
-          case _ => {
-            if (metric.tags.contains(customMarker)) {
-              s"${timestamp}\t${"gauge-gauge"}\t${timestamp}\t${metric.name}\t0\t0\t${metric.value}\t1"
-            } else {
-              s"${prefix(metric, timestamp)}\t${convert(metric.unit, metric.value)}"
-            }
-          }
-        }
+    val gauges = (snapshot.metrics.gauges).map { metric ⇒ {
+      val metrisString = buildGauges(metric)
+      if (metrisString != null && metrisString.length > 0) {
+        prefix().concat(metrisString).concat(" ").concat(timestamp.toString).concat("000000").trim.replaceAll(" +", " ")
+      } else {
+        ""
       }
-      ).toJson
+    }
     }.toList
-    (IndexTypeHeader.toJson :: histograms ::: counters ::: gauges).mkString("\n").getBytes(StandardCharsets.UTF_8)
+    (histograms ::: counters ::: gauges).mkString("\n").getBytes(StandardCharsets.UTF_8)
   }
 
-  private def prefix(metric: MetricDistribution, timestamp: Long): String = {
+  private def buildCounters(metric: MetricValue): String = {
     metric.name match {
-      case "host.cpu" => s"${timestamp}\t${"system-metric-cpu-" + getTagOrEmptyString(metric.tags, "mode")}\t${timestamp}\t"
-      case "host.load-average" => {
-        getTagOrEmptyString(metric.tags, "period") match {
-          case "1" => s"${timestamp}\t${"system-metric-one-minute"}\t${timestamp}\t"
-          case "5" => s"${timestamp}\t${"system-metric-five-minutes"}\t${timestamp}\t"
-          case "15" => s"${timestamp}\t${"system-metric-fifteen-minutes"}\t${timestamp}\t"
-          case _ => defaultMetricString(timestamp, metric.name)
-        }
-      }
-      case "host.swap" => s"${timestamp}\t${"system-metric-swap-" + getTagOrEmptyString(metric.tags, "mode")}\t${timestamp}\t"
-      case "host.memory" => s"${timestamp}\t${"system-metric-memory-" + getTagOrEmptyString(metric.tags, "mode")}\t${timestamp}\t"
-      case "akka.actor.time-in-mailbox" => s"${timestamp}\t${"akka-actor-time-in-mailbox"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "path")}"
-      case "akka.actor.processing-time" => s"${timestamp}\t${"akka-actor-processing-time"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "path")}"
-      case "akka.actor.mailbox-size" => s"${timestamp}\t${"akka-actor-mailbox-size"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "path")}"
-      case "executor.queue" => s"${timestamp}\t${"akka-dispatcher-queued-tasks-count"}\t${timestamp}\t"
-      case "executor.threads" => {
-        getTagOrEmptyString(metric.tags, "state") match {
-          case "total" => s"${timestamp}\t${"akka-dispatcher-running-threads"}\t${timestamp}\t"
-          case "active" => s"${timestamp}\t${"akka-dispatcher-active-threads"}\t${timestamp}\t"
-          case _ => defaultMetricString(timestamp, metric.name)
-        }
-      }
-      case "akka.router.routing-time" => s"${timestamp}\t${"akka-router-routing-time"}\t${timestamp}\t"
-      case "akka.router.time-in-mailbox" => s"${timestamp}\t${"akka-router-time-in-mailbox"}\t${timestamp}\t"
-      case "akka.router.processing-time" => s"${timestamp}\t${"akka-router-processing-time"}\t${timestamp}\t"
-      case "jvm.gc" => s"${timestamp}\t${"system-metric-garbage-collection-time"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "collector")}"
-      case "jvm.gc.promotion" => s"${timestamp}\t${"system-metric-garbage-collection-count"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "space")}"
-      case "jvm.memory" => s"${timestamp}\t${"system-metric-" + getTagOrEmptyString(metric.tags, "segment") + "-" + getTagOrEmptyString(metric.tags, "measure")}\t${timestamp}\t"
-      case "span.processing-time" => {
-        getTagOrEmptyString(metric.tags, "error") match {
-          case "false" => s"${timestamp}\t${"trace-elapsed-time"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "operation")}"
-          case "true" => s"${timestamp}\t${"trace-errors"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "operation")}"
-          case _ => defaultMetricString(timestamp, metric.name)
-        }
-      }
-      case "process.cpu" => {
-        getTagOrEmptyString(metric.tags, "mode") match {
-          case "system" => s"${timestamp}\t${"system-metric-process-system-cpu"}\t${timestamp}\t"
-          case "total" => s"${timestamp}\t${"system-metric-process-cpu"}\t${timestamp}\t"
-          case "user" => s"${timestamp}\t${"system-metric-process-user-cpu"}\t${timestamp}\t"
-          case _ => defaultMetricString(timestamp, metric.name)
+      case "host.file-system.activity" => s" akka.os.disk.io.${getTagOrEmptyString(metric.tags, "operation")}=${metric.value}"
+      case "akka.actor.errors" => s",actorName=${getTagOrEmptyString(metric.tags, "path")} akka.actor.errors=${metric.value}"
+      case "akka.router.errors" => s" akka.router.processing.errors=${metric.value}"
+      case "executor.tasks" => s" akka.dispatcher.executor.tasks.processed=${metric.value}"
+      case "host.network.packets" => {
+        if (metric.tags.contains("state")) {
+          getTagOrEmptyString(metric.tags, "state") match {
+            case "error" => {
+              getTagOrEmptyString(metric.tags, "direction") match {
+                case "transmitted" => s" akka.os.network.tx.errors.sum=${metric.value},akka.os.network.tx.errors.count=1"
+                case "received" => s" akka.os.network.rx.errors.sum=${metric.value},akka.os.network.rx.errors.count=1"
+                case _ => ""
+              }
+            }
+            case "dropped" => {
+              getTagOrEmptyString(metric.tags, "direction") match {
+                case "transmitted" => s" akka.os.network.tx.dropped.sum=${metric.value},akka.os.network.tx.dropped.count=1"
+                case "received" => s" akka.os.network.rx.dropped.sum=${metric.value},akka.os.network.rx.dropped.count=1"
+                case _ => ""
+              }
+            }
+            case _ => ""
+          }
+        } else {
+          getTagOrEmptyString(metric.tags, "direction") match {
+            case "transmitted" => s" akka.os.network.tx.rate=${metric.value}"
+            case "received" => s" akka.os.network.rx.rate=${metric.value}"
+            case _ => ""
+          }
         }
       }
       case _ => {
         if (metric.tags.contains(customMarker)) {
-          s"${timestamp}\t${"histogram-histogram"}\t${timestamp}\t${metric.name}"
+          s",akka.metric=counter-counter akka.custom.counter.count=${metric.value}"
         } else {
-          defaultMetricString(timestamp, metric.name)
+          s""
+        }
+      }
+    }
+  }
+
+  private def buildGauges(metric: MetricValue): String = {
+    metric.name match {
+      case "executor.pool" => getTagOrEmptyString(metric.tags, "setting") match {
+        case "parallelism" => s",akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")} akka.dispatcher.fj.parallelism=${convert(metric.unit, metric.value)}"
+        case "min" => s",akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")} akka.dispatcher.executor.pool=${convert(metric.unit, metric.value)}"
+        case "max" => s",akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")} akka.dispatcher.executor.pool.max=${convert(metric.unit, metric.value)}"
+        case "corePoolSize" => s",akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")} akka.dispatcher.executor.pool.core=${convert(metric.unit, metric.value)}"
+        case _ => ""
+      }
+      case "jvm.class-loading" => {
+        getTagOrEmptyString(metric.tags, "mode") match {
+          case "currently-loaded" => s" akka.jvm.classes.loaded=${metric.value}"
+          case "unloaded" => s" akka.jvm.classes.unloaded=${metric.value}"
+          case "loaded" => s" akka.jvm.classes.loaded.total=${metric.value}"
+          case _ => ""
+        }
+      }
+      case "jvm.threads" => getTagOrEmptyString(metric.tags, "measure") match {
+        case "daemon" => s" akka.jvm.threads.deamon.sum=${metric.value},akka.jvm.threads.deamon.count=1"
+        case "peak" => s" akka.jvm.threads.max.sum={metric.value},akka.jvm.threads.max.count=1"
+        case "total" => s" akka.jvm.threads.sum=${metric.value},akka.jvm.threads.count=1"
+        case _ => ""
+      }
+      case _ => {
+        if (metric.tags.contains(customMarker)) {
+          s",akka.metric=counter-counter akka.custom.counter.sum=${metric.value}"
+        } else {
+          s""
+        }
+      }
+    }
+  }
+
+  private def buildHistograms(metric: MetricDistribution): String = {
+    val min = convert(metric.unit, metric.distribution.min)
+    val max = convert(metric.unit, metric.distribution.max)
+    val sum = convert(metric.unit, metric.distribution.sum)
+    val count = convert(metric.unit, metric.distribution.count);
+    val p50 = convert(metric.unit, metric.distribution.percentile(50D).value)
+    val p90 = convert(metric.unit, metric.distribution.percentile(90D).value)
+    val p95 = convert(metric.unit, metric.distribution.percentile(95D).value)
+    val p99 = convert(metric.unit, metric.distribution.percentile(99D).value)
+    val p995 = convert(metric.unit, metric.distribution.percentile(99.5D).value)
+
+
+    metric.name match {
+      case "host.cpu" => s" akka.os.cpu.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},akka.os.cpu.${getTagOrEmptyString(metric.tags, "mode")}.count=${count}"
+      case "host.load-average" => s" akka.os.load.${getTagOrEmptyString(metric.tags, "period")}min.sum=${sum},akka.os.load.${getTagOrEmptyString(metric.tags, "period")}min.count=${count}"
+
+      case "host.swap" => s" akka.os.swap.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},akka.os.swap.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}"
+      case "host.memory" => s" akka.os.memory.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},akka.os.memory.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}"
+
+      case "akka.actor.time-in-mailbox" => s",akka.actor=${getTagOrEmptyString(metric.tags, "path")} akka.actor.mailbox.time.min=${min},akka.actor.mailbox.time.max=${max},akka.actor.mailbox.time.sum=${sum},akka.actor.mailbox.time.count=${count}"
+      case "akka.actor.processing-time" => s",akka.actor=${getTagOrEmptyString(metric.tags, "path")} akka.actor.processing.time.min=${min},akka.actor.processing.time.max=${max},akka.actor.processing.time.sum=${sum},akka.actor.processing.time.count=${count}"
+      case "akka.actor.mailbox-size" => s",akka.actor=${getTagOrEmptyString(metric.tags, "path")} akka.actor.mailbox.size.sum=${sum},akka.actor.mailbox.size.count=${count}"
+
+      case "akka.router.routing-time" => s",akka.router=${getTagOrEmptyString(metric.tags, "name")} akka.router.routing.time.min=${min},akka.router.routing.time.max=${max},akka.router.routing.time.sum=${sum},akka.router.routing.time.count=${count}"
+      case "akka.router.time-in-mailbox" => s",akka.router=${getTagOrEmptyString(metric.tags, "name")} akka.router.mailbox.time.min=${min},akka.router.mailbox.time.max=${max},akka.router.mailbox.time.sum=${sum},akka.router.mailbox.time.count=${count}"
+      case "akka.router.processing-time" => s",akka.router=${getTagOrEmptyString(metric.tags, "name")} akka.router.processing.time.min=${min},akka.router.processing.time.max=${max},akka.router.processing.time.sum=${sum},akka.router.processing.time.count=${count}"
+
+      case "executor.queue" => s" akka.dispatcher.fj.tasks.queued=${max}"
+
+      case "executor.threads" => {
+        getTagOrEmptyString(metric.tags, "state") match {
+          case "total" => s" akka.dispatcher.fj.threads.running=${max}"
+          case "active" => s" akka.dispatcher.executor.threads.active=${max}"
+          case _ => ""
+        }
+      }
+      case "jvm.gc" => s",akka.gc=${getTagOrEmptyString(metric.tags, "collector")} akka.jvm.gc.collection.time=${sum}"
+      case "jvm.gc.promotion" => s",akka.gc=${getTagOrEmptyString(metric.tags, "space")} akka.jvm.gc.collection.count=${sum}"
+
+      case "jvm.memory" => s" akka.jvm.${getTagOrEmptyString(metric.tags, "segment")}.${getTagOrEmptyString(metric.tags, "measure")}.sum=${sum},akka.jvm.${getTagOrEmptyString(metric.tags, "segment")}.${getTagOrEmptyString(metric.tags, "measure")}.count=${count}"
+      case "span.processing-time" => {
+        getTagOrEmptyString(metric.tags, "error") match {
+          case "false" => s",akka.trace=${getTagOrEmptyString(metric.tags, "operation")} tracing.akka.requests.time.min=${min},tracing.akka.requests.time.max=${max},tracing.akka.requests.time.sum=${sum},tracing.akka.requests.time.count=${count}"
+          case "true" => s",akka.trace=${getTagOrEmptyString(metric.tags, "operation")} tracing.akka.requests.errors=${count}"
+          case _ => ""
+        }
+      }
+      case "process.cpu" => s" akka.process.cpu.${getTagOrEmptyString(metric.tags, "mode")}.count=${count},akka.process.cpu.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum}"
+      case _ => {
+        if (metric.tags.contains(customMarker)) {
+          s",akka.metric=histogram-histogram akka.custom.histogram.min=${min},akka.custom.histogram.max=${max},akka.custom.histogram.sum=${sum},akka.custom.histogram.count=${count},akka.custom.histogram.p50=${p50},akka.custom.histogram.p90=${p90},akka.custom.histogram.p99=${p99}"
+        } else {
+          ""
         }
       }
 
     }
   }
 
-  private def prefix(metric: MetricValue, timestamp: Long): String = {
-    metric.name match {
-      case "host.file-system.activity" => getTagOrEmptyString(metric.tags, "operation") match {
-        case "read" => s"${timestamp}\t${"system-metric-file-system-reads"}\t${timestamp}\t"
-        case "write" => s"${timestamp}\t${"system-metric-file-system-writes"}\t${timestamp}\t"
-        case _ => defaultMetricString(timestamp, metric.name)
-      }
-      case "akka.actor.errors" => s"${timestamp}\t${"akka-actor-errors"}\t${timestamp}\t${getTagOrEmptyString(metric.tags, "path")}"
-      case "akka.router.errors" => s"${timestamp}\t${"akka-router-errors"}\t${timestamp}\t"
-      case _ => defaultMetricString(timestamp, metric.name)
-    }
+  private def prefix(): String = {
+    s"akka,token=${token},os.host=${host}"
   }
 
   private def convert(unit: MeasurementUnit, value: Long): Long = unit.dimension.name match {
@@ -397,7 +395,7 @@ class SPMReporter extends MetricReporter {
 
   private def post(body: Array[Byte]): Unit = {
     val queryString = generateQueryString(Map("host" -> host, "token" -> token))
-    httpClient.post(s"$url$queryString", body).recover {
+    httpClient.post(s"$url", body).recover {
       case t: Throwable ⇒ {
         log.error("Can't post metrics.", t)
       }
@@ -420,10 +418,6 @@ class SPMReporter extends MetricReporter {
     } else {
       ""
     }
-  }
-
-  private def defaultMetricString(timestamp: Long, name: String): String = {
-    s"${timestamp}\t${name.replaceAll("\\.", "-")}\t${timestamp}\t"
   }
 }
 
