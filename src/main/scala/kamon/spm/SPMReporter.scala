@@ -62,6 +62,7 @@ class SPMReporter extends MetricReporter {
     InetAddress.getLocalHost.getHostName
   }
   var httpClient: AsyncHttpClient = null;
+  var DEFAULT_DIM = "default"
 
   override def start(): Unit = {
     log.info("Starting kamon-spm reporter")
@@ -120,6 +121,15 @@ class SPMReporter extends MetricReporter {
     }
   }
 
+  private def addMetric(dimension: String, metrics: String)(processedMetrics: scala.collection.mutable.Map[String, String]) {
+    if (processedMetrics.contains(dimension)) {
+      val st = processedMetrics.get(dimension)
+      processedMetrics.put(dimension, st.get.concat(",").concat(metrics))
+    } else {
+      processedMetrics.put(dimension, metrics)
+    }
+  }
+
   private def buildTraceRequestBody(snapshot: PeriodSnapshot): Array[Byte] = {
     val timestamp: Long = (snapshot.from.toEpochMilli)
     val baos = new ByteArrayOutputStream()
@@ -170,59 +180,40 @@ class SPMReporter extends MetricReporter {
 
   private def buildRequestBody(snapshot: PeriodSnapshot): Array[Byte] = {
     val timestamp: Long = (snapshot.from.toEpochMilli)
-
-    val histograms = (snapshot.metrics.histograms ++ snapshot.metrics.rangeSamplers).map { metric ⇒ {
-      val metrisString = buildHistograms(metric)
-      if (metrisString != null && metrisString.length > 0) {
-        prefix().concat(metrisString).concat(" ").concat(timestamp.toString).concat("000000").trim.replaceAll(" +", " ")
+    val processedMetrics = scala.collection.mutable.Map[String, String]()
+    (snapshot.metrics.histograms ++ snapshot.metrics.rangeSamplers).map { metric ⇒ buildHistograms(metric, processedMetrics)}
+    val counters = (snapshot.metrics.counters).map { metric ⇒ val metrisString = buildCounters(metric, processedMetrics)}
+    val gauges = (snapshot.metrics.gauges).map { metric ⇒ val metrisString = buildGauges(metric, processedMetrics)}
+    val requestData = processedMetrics.view.map { case (k, v) =>
+      if (DEFAULT_DIM.equals(k)) {
+        prefix().concat(" ").concat(v).concat(" ").concat(timestamp.toString).concat("000000").trim.replaceAll(" +", " ")
       } else {
-        ""
+        prefix().concat(",").concat(k).concat(" ").concat(v).concat(" ").concat(timestamp.toString).concat("000000").trim.replaceAll(" +", " ")
       }
-    }
     }.toList
-
-    val counters = (snapshot.metrics.counters).map { metric ⇒ {
-      val metrisString = buildCounters(metric)
-      if (metrisString != null && metrisString.length > 0) {
-        prefix().concat(metrisString).concat(" ").concat(timestamp.toString).concat("000000").trim.replaceAll(" +", " ")
-      } else {
-        ""
-      }
-    }
-    }.toList
-
-    val gauges = (snapshot.metrics.gauges).map { metric ⇒ {
-      val metrisString = buildGauges(metric)
-      if (metrisString != null && metrisString.length > 0) {
-        prefix().concat(metrisString).concat(" ").concat(timestamp.toString).concat("000000").trim.replaceAll(" +", " ")
-      } else {
-        ""
-      }
-    }
-    }.toList
-    (histograms ::: counters ::: gauges).mkString("\n").getBytes(StandardCharsets.UTF_8)
+    (requestData).mkString("\n").getBytes(StandardCharsets.UTF_8)
   }
 
-  private def buildCounters(metric: MetricValue): String = {
+  private def buildCounters(metric: MetricValue, processedMetrics: scala.collection.mutable.Map[String, String]) = {
     metric.name match {
-      case "host.file-system.activity" => s" akka.os.disk.io.${getTagOrEmptyString(metric.tags, "operation")}=${metric.value}"
-      case "akka.actor.errors" => s",actorName=${getTagOrEmptyString(metric.tags, "path")} akka.actor.errors=${metric.value}"
-      case "akka.router.errors" => s" akka.router.processing.errors=${metric.value}"
-      case "executor.tasks" => s" akka.dispatcher.executor.tasks.processed=${metric.value}"
+      case "host.file-system.activity" => addMetric(DEFAULT_DIM, s"os.disk.io.${getTagOrEmptyString(metric.tags, "operation")}=${metric.value}")(processedMetrics)
+      case "akka.actor.errors" => addMetric(s"actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.errors=${metric.value}")(processedMetrics)
+      case "akka.router.errors" => addMetric(DEFAULT_DIM, s"router.processing.errors=${metric.value}")(processedMetrics)
+      case "executor.tasks" => addMetric(DEFAULT_DIM, "dispatcher.executor.tasks.processed=${metric.value}")(processedMetrics)
       case "host.network.packets" => {
         if (metric.tags.contains("state")) {
           getTagOrEmptyString(metric.tags, "state") match {
             case "error" => {
               getTagOrEmptyString(metric.tags, "direction") match {
-                case "transmitted" => s" akka.os.network.tx.errors.sum=${metric.value},akka.os.network.tx.errors.count=1"
-                case "received" => s" akka.os.network.rx.errors.sum=${metric.value},akka.os.network.rx.errors.count=1"
+                case "transmitted" => addMetric(DEFAULT_DIM, s"os.network.tx.errors.sum=${metric.value},os.network.tx.errors.count=1")(processedMetrics)
+                case "received" => addMetric(DEFAULT_DIM, s"os.network.rx.errors.sum=${metric.value},os.network.rx.errors.count=1")(processedMetrics)
                 case _ => ""
               }
             }
             case "dropped" => {
               getTagOrEmptyString(metric.tags, "direction") match {
-                case "transmitted" => s" akka.os.network.tx.dropped.sum=${metric.value},akka.os.network.tx.dropped.count=1"
-                case "received" => s" akka.os.network.rx.dropped.sum=${metric.value},akka.os.network.rx.dropped.count=1"
+                case "transmitted" => addMetric(DEFAULT_DIM, s"os.network.tx.dropped.sum=${metric.value},os.network.tx.dropped.count=1")(processedMetrics)
+                case "received" => addMetric(DEFAULT_DIM, s"os.network.rx.dropped.sum=${metric.value},os.network.rx.dropped.count=1")(processedMetrics)
                 case _ => ""
               }
             }
@@ -230,15 +221,15 @@ class SPMReporter extends MetricReporter {
           }
         } else {
           getTagOrEmptyString(metric.tags, "direction") match {
-            case "transmitted" => s" akka.os.network.tx.rate=${metric.value}"
-            case "received" => s" akka.os.network.rx.rate=${metric.value}"
+            case "transmitted" => addMetric(DEFAULT_DIM, s"os.network.tx.rate=${metric.value}")(processedMetrics)
+            case "received" => addMetric(DEFAULT_DIM, s"os.network.rx.rate=${metric.value}")(processedMetrics)
             case _ => ""
           }
         }
       }
       case _ => {
         if (metric.tags.contains(customMarker)) {
-          s",akka.metric=counter-counter akka.custom.counter.count=${metric.value}"
+          addMetric(s"metric=counter-counter", s"custom.counter.count=${metric.value}")(processedMetrics)
         } else {
           s""
         }
@@ -246,32 +237,32 @@ class SPMReporter extends MetricReporter {
     }
   }
 
-  private def buildGauges(metric: MetricValue): String = {
+  private def buildGauges(metric: MetricValue, processedMetrics: scala.collection.mutable.Map[String, String]) = {
     metric.name match {
       case "executor.pool" => getTagOrEmptyString(metric.tags, "setting") match {
-        case "parallelism" => s",akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")} akka.dispatcher.fj.parallelism=${convert(metric.unit, metric.value)}"
-        case "min" => s",akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")} akka.dispatcher.executor.pool=${convert(metric.unit, metric.value)}"
-        case "max" => s",akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")} akka.dispatcher.executor.pool.max=${convert(metric.unit, metric.value)}"
-        case "corePoolSize" => s",akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")} akka.dispatcher.executor.pool.core=${convert(metric.unit, metric.value)}"
+        case "parallelism" => addMetric(s"dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.fj.parallelism=${convert(metric.unit, metric.value)}")(processedMetrics)
+        case "min" => addMetric(s"dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool=${convert(metric.unit, metric.value)}")(processedMetrics)
+        case "max" => addMetric(s"dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool.max=${convert(metric.unit, metric.value)}")(processedMetrics)
+        case "corePoolSize" => addMetric(s"dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool.core=${convert(metric.unit, metric.value)}")(processedMetrics)
         case _ => ""
       }
       case "jvm.class-loading" => {
         getTagOrEmptyString(metric.tags, "mode") match {
-          case "currently-loaded" => s" akka.jvm.classes.loaded=${metric.value}"
-          case "unloaded" => s" akka.jvm.classes.unloaded=${metric.value}"
-          case "loaded" => s" akka.jvm.classes.loaded.total=${metric.value}"
+          case "currently-loaded" => addMetric(DEFAULT_DIM, s"jvm.classes.loaded=${metric.value}")(processedMetrics)
+          case "unloaded" => addMetric(DEFAULT_DIM, s"jvm.classes.unloaded=${metric.value}")(processedMetrics)
+          case "loaded" => addMetric(DEFAULT_DIM, s"jvm.classes.loaded.total=${metric.value}")(processedMetrics)
           case _ => ""
         }
       }
       case "jvm.threads" => getTagOrEmptyString(metric.tags, "measure") match {
-        case "daemon" => s" akka.jvm.threads.deamon.sum=${metric.value},akka.jvm.threads.deamon.count=1"
-        case "peak" => s" akka.jvm.threads.max.sum={metric.value},akka.jvm.threads.max.count=1"
-        case "total" => s" akka.jvm.threads.sum=${metric.value},akka.jvm.threads.count=1"
+        case "daemon" => addMetric(DEFAULT_DIM, s"jvm.threads.deamon.sum=${metric.value},jvm.threads.deamon.count=1")(processedMetrics)
+        case "peak" => addMetric(DEFAULT_DIM, s"jvm.threads.max.sum=${metric.value},jvm.threads.max.count=1")(processedMetrics)
+        case "total" => addMetric(DEFAULT_DIM, s"jvm.threads.sum=${metric.value},jvm.threads.count=1")(processedMetrics)
         case _ => ""
       }
       case _ => {
         if (metric.tags.contains(customMarker)) {
-          s",akka.metric=counter-counter akka.custom.counter.sum=${metric.value}"
+          addMetric("metric=counter-counter", s"custom.counter.sum=${metric.value}")(processedMetrics)
         } else {
           s""
         }
@@ -279,7 +270,7 @@ class SPMReporter extends MetricReporter {
     }
   }
 
-  private def buildHistograms(metric: MetricDistribution): String = {
+  private def buildHistograms(metric: MetricDistribution, processedMetrics: scala.collection.mutable.Map[String, String]) = {
     val min = convert(metric.unit, metric.distribution.min)
     val max = convert(metric.unit, metric.distribution.max)
     val sum = convert(metric.unit, metric.distribution.sum)
@@ -292,44 +283,44 @@ class SPMReporter extends MetricReporter {
 
 
     metric.name match {
-      case "host.cpu" => s" akka.os.cpu.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},akka.os.cpu.${getTagOrEmptyString(metric.tags, "mode")}.count=${count}"
-      case "host.load-average" => s" akka.os.load.${getTagOrEmptyString(metric.tags, "period")}min.sum=${sum},akka.os.load.${getTagOrEmptyString(metric.tags, "period")}min.count=${count}"
+      case "host.cpu" => addMetric(DEFAULT_DIM, s"os.cpu.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},os.cpu.${getTagOrEmptyString(metric.tags, "mode")}.count=${count}")(processedMetrics)
+      case "host.load-average" => addMetric(DEFAULT_DIM, s"os.load.${getTagOrEmptyString(metric.tags, "period")}min.sum=${sum},os.load.${getTagOrEmptyString(metric.tags, "period")}min.count=${count}")(processedMetrics)
 
-      case "host.swap" => s" akka.os.swap.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},akka.os.swap.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}"
-      case "host.memory" => s" akka.os.memory.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},akka.os.memory.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}"
+      case "host.swap" => addMetric(DEFAULT_DIM, s"os.swap.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},os.swap.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}")(processedMetrics)
+      case "host.memory" => addMetric(DEFAULT_DIM, s"os.memory.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},os.memory.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}")(processedMetrics)
 
-      case "akka.actor.time-in-mailbox" => s",akka.actor=${getTagOrEmptyString(metric.tags, "path")} akka.actor.mailbox.time.min=${min},akka.actor.mailbox.time.max=${max},akka.actor.mailbox.time.sum=${sum},akka.actor.mailbox.time.count=${count}"
-      case "akka.actor.processing-time" => s",akka.actor=${getTagOrEmptyString(metric.tags, "path")} akka.actor.processing.time.min=${min},akka.actor.processing.time.max=${max},akka.actor.processing.time.sum=${sum},akka.actor.processing.time.count=${count}"
-      case "akka.actor.mailbox-size" => s",akka.actor=${getTagOrEmptyString(metric.tags, "path")} akka.actor.mailbox.size.sum=${sum},akka.actor.mailbox.size.count=${count}"
+      case "akka.actor.time-in-mailbox" => addMetric(s"actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.mailbox.time.min=${min},actor.mailbox.time.max=${max},actor.mailbox.time.sum=${sum},actor.mailbox.time.count=${count}")(processedMetrics)
+      case "akka.actor.processing-time" => addMetric(s"actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.processing.time.min=${min},actor.processing.time.max=${max},actor.processing.time.sum=${sum},actor.processing.time.count=${count}")(processedMetrics)
+      case "akka.actor.mailbox-size" => addMetric(s"actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.mailbox.size.sum=${sum},actor.mailbox.size.count=${count}")(processedMetrics)
 
-      case "akka.router.routing-time" => s",akka.router=${getTagOrEmptyString(metric.tags, "name")} akka.router.routing.time.min=${min},akka.router.routing.time.max=${max},akka.router.routing.time.sum=${sum},akka.router.routing.time.count=${count}"
-      case "akka.router.time-in-mailbox" => s",akka.router=${getTagOrEmptyString(metric.tags, "name")} akka.router.mailbox.time.min=${min},akka.router.mailbox.time.max=${max},akka.router.mailbox.time.sum=${sum},akka.router.mailbox.time.count=${count}"
-      case "akka.router.processing-time" => s",akka.router=${getTagOrEmptyString(metric.tags, "name")} akka.router.processing.time.min=${min},akka.router.processing.time.max=${max},akka.router.processing.time.sum=${sum},akka.router.processing.time.count=${count}"
+      case "akka.router.routing-time" =>  addMetric(s"router=${getTagOrEmptyString(metric.tags, "name")}", s"router.routing.time.min=${min},router.routing.time.max=${max},router.routing.time.sum=${sum},router.routing.time.count=${count}")(processedMetrics)
+      case "akka.router.time-in-mailbox" =>  addMetric(s"router=${getTagOrEmptyString(metric.tags, "name")}", s"router.mailbox.time.min=${min},router.mailbox.time.max=${max},router.mailbox.time.sum=${sum},router.mailbox.time.count=${count}")(processedMetrics)
+      case "akka.router.processing-time" =>  addMetric(s"router=${getTagOrEmptyString(metric.tags, "name")}", s"router.processing.time.min=${min},router.processing.time.max=${max},router.processing.time.sum=${sum},router.processing.time.count=${count}")(processedMetrics)
 
-      case "executor.queue" => s" akka.dispatcher.fj.tasks.queued=${max}"
+      case "executor.queue" => addMetric(DEFAULT_DIM, s"dispatcher.fj.tasks.queued=${max}")(processedMetrics)
 
       case "executor.threads" => {
         getTagOrEmptyString(metric.tags, "state") match {
-          case "total" => s" akka.dispatcher.fj.threads.running=${max}"
-          case "active" => s" akka.dispatcher.executor.threads.active=${max}"
+          case "total" => addMetric(DEFAULT_DIM, s"dispatcher.fj.threads.running=${max}")(processedMetrics)
+          case "active" => addMetric(DEFAULT_DIM, s"dispatcher.executor.threads.active=${max}")(processedMetrics)
           case _ => ""
         }
       }
-      case "jvm.gc" => s",akka.gc=${getTagOrEmptyString(metric.tags, "collector")} akka.jvm.gc.collection.time=${sum}"
-      case "jvm.gc.promotion" => s",akka.gc=${getTagOrEmptyString(metric.tags, "space")} akka.jvm.gc.collection.count=${sum}"
+      case "jvm.gc" => addMetric(s"gc=${getTagOrEmptyString(metric.tags, "collector")}", s"jvm.gc.collection.time=${sum}")(processedMetrics)
+      case "jvm.gc.promotion" => addMetric(s"gc=${getTagOrEmptyString(metric.tags, "space")}", s"jvm.gc.collection.count=${sum}")(processedMetrics)
 
-      case "jvm.memory" => s" akka.jvm.${getTagOrEmptyString(metric.tags, "segment")}.${getTagOrEmptyString(metric.tags, "measure")}.sum=${sum},akka.jvm.${getTagOrEmptyString(metric.tags, "segment")}.${getTagOrEmptyString(metric.tags, "measure")}.count=${count}"
+      case "jvm.memory" => addMetric(DEFAULT_DIM, s"jvm.${getTagOrEmptyString(metric.tags, "segment")}.${getTagOrEmptyString(metric.tags, "measure")}.sum=${sum},jvm.${getTagOrEmptyString(metric.tags, "segment")}.${getTagOrEmptyString(metric.tags, "measure")}.count=${count}")(processedMetrics)
       case "span.processing-time" => {
         getTagOrEmptyString(metric.tags, "error") match {
-          case "false" => s",akka.trace=${getTagOrEmptyString(metric.tags, "operation")} tracing.akka.requests.time.min=${min},tracing.akka.requests.time.max=${max},tracing.akka.requests.time.sum=${sum},tracing.akka.requests.time.count=${count}"
-          case "true" => s",akka.trace=${getTagOrEmptyString(metric.tags, "operation")} tracing.akka.requests.errors=${count}"
+          case "false" => addMetric(s"trace=${getTagOrEmptyString(metric.tags, "operation")}", s"tracing.requests.time.min=${min},tracing.requests.time.max=${max},tracing.requests.time.sum=${sum},tracing.requests.time.count=${count}")(processedMetrics)
+          case "true" => addMetric(s"trace=${getTagOrEmptyString(metric.tags, "operation")}", s"tracing.requests.errors=${count}")(processedMetrics)
           case _ => ""
         }
       }
-      case "process.cpu" => s" akka.process.cpu.${getTagOrEmptyString(metric.tags, "mode")}.count=${count},akka.process.cpu.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum}"
+      case "process.cpu" => addMetric(DEFAULT_DIM, s"process.cpu.${getTagOrEmptyString(metric.tags, "mode")}.count=${count},process.cpu.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum}")(processedMetrics)
       case _ => {
         if (metric.tags.contains(customMarker)) {
-          s",akka.metric=histogram-histogram akka.custom.histogram.min=${min},akka.custom.histogram.max=${max},akka.custom.histogram.sum=${sum},akka.custom.histogram.count=${count},akka.custom.histogram.p50=${p50},akka.custom.histogram.p90=${p90},akka.custom.histogram.p99=${p99}"
+          addMetric("metric=histogram-histogram", s"custom.histogram.min=${min},custom.histogram.max=${max},custom.histogram.sum=${sum},custom.histogram.count=${count},custom.histogram.p50=${p50},custom.histogram.p90=${p90},custom.histogram.p99=${p99}")(processedMetrics)
         } else {
           ""
         }
