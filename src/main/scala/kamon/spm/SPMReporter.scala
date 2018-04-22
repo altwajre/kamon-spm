@@ -197,7 +197,7 @@ class SPMReporter extends MetricReporter {
   private def buildCounters(metric: MetricValue, processedMetrics: scala.collection.mutable.Map[String, String]) = {
     metric.name match {
       case "host.file-system.activity" => addMetric(DEFAULT_DIM, s"os.disk.io.${getTagOrEmptyString(metric.tags, "operation")}=${metric.value}")(processedMetrics)
-      case "akka.actor.errors" => addMetric(s"actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.errors=${metric.value}")(processedMetrics)
+      case "akka.actor.errors" => addMetric(s"akka.actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.errors=${metric.value}")(processedMetrics)
       case "akka.router.errors" => addMetric(DEFAULT_DIM, s"router.processing.errors=${metric.value}")(processedMetrics)
       case "executor.tasks" => addMetric(DEFAULT_DIM, "dispatcher.executor.tasks.processed=${metric.value}")(processedMetrics)
       case "host.network.packets" => {
@@ -229,7 +229,7 @@ class SPMReporter extends MetricReporter {
       }
       case _ => {
         if (metric.tags.contains(customMarker)) {
-          addMetric(s"metric=counter-counter", s"custom.counter.count=${metric.value}")(processedMetrics)
+          addMetric(s"akka.metric=counter-counter", s"custom.counter.count=${metric.value}")(processedMetrics)
         } else {
           s""
         }
@@ -240,10 +240,10 @@ class SPMReporter extends MetricReporter {
   private def buildGauges(metric: MetricValue, processedMetrics: scala.collection.mutable.Map[String, String]) = {
     metric.name match {
       case "executor.pool" => getTagOrEmptyString(metric.tags, "setting") match {
-        case "parallelism" => addMetric(s"dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.fj.parallelism=${convert(metric.unit, metric.value)}")(processedMetrics)
-        case "min" => addMetric(s"dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool=${convert(metric.unit, metric.value)}")(processedMetrics)
-        case "max" => addMetric(s"dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool.max=${convert(metric.unit, metric.value)}")(processedMetrics)
-        case "corePoolSize" => addMetric(s"dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool.core=${convert(metric.unit, metric.value)}")(processedMetrics)
+        case "parallelism" => addMetric(s"akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.fj.parallelism=${convert(metric.unit, metric.value)}")(processedMetrics)
+        case "min" => addMetric(s"akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool=${convert(metric.unit, metric.value)}")(processedMetrics)
+        case "max" => addMetric(s"akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool.max=${convert(metric.unit, metric.value)}")(processedMetrics)
+        case "corePoolSize" => addMetric(s"akka.dispatcher=${getTagOrEmptyString(metric.tags, "name")}", s"dispatcher.executor.pool.core=${convert(metric.unit, metric.value)}")(processedMetrics)
         case _ => ""
       }
       case "jvm.class-loading" => {
@@ -262,7 +262,7 @@ class SPMReporter extends MetricReporter {
       }
       case _ => {
         if (metric.tags.contains(customMarker)) {
-          addMetric("metric=counter-counter", s"custom.counter.sum=${metric.value}")(processedMetrics)
+          addMetric("akka.metric=counter-counter", s"custom.counter.sum=${metric.value}")(processedMetrics)
         } else {
           s""
         }
@@ -287,15 +287,15 @@ class SPMReporter extends MetricReporter {
       case "host.load-average" => addMetric(DEFAULT_DIM, s"os.load.${getTagOrEmptyString(metric.tags, "period")}min.sum=${sum},os.load.${getTagOrEmptyString(metric.tags, "period")}min.count=${count}")(processedMetrics)
 
       case "host.swap" => addMetric(DEFAULT_DIM, s"os.swap.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},os.swap.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}")(processedMetrics)
-      case "host.memory" => addMetric(DEFAULT_DIM, s"os.memory.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},os.memory.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}")(processedMetrics)
+      case "host.memory" => addMetric(s"akka.memory.pool=", s"os.memory.${getTagOrEmptyString(metric.tags, "mode")}.sum=${sum},os.memory.${{getTagOrEmptyString(metric.tags, "mode")}}.count=${count}")(processedMetrics)
 
-      case "akka.actor.time-in-mailbox" => addMetric(s"actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.mailbox.time.min=${min},actor.mailbox.time.max=${max},actor.mailbox.time.sum=${sum},actor.mailbox.time.count=${count}")(processedMetrics)
-      case "akka.actor.processing-time" => addMetric(s"actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.processing.time.min=${min},actor.processing.time.max=${max},actor.processing.time.sum=${sum},actor.processing.time.count=${count}")(processedMetrics)
-      case "akka.actor.mailbox-size" => addMetric(s"actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.mailbox.size.sum=${sum},actor.mailbox.size.count=${count}")(processedMetrics)
+      case "akka.actor.time-in-mailbox" => addMetric(s"akka.actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.mailbox.time.min=${min},actor.mailbox.time.max=${max},actor.mailbox.time.sum=${sum},actor.mailbox.time.count=${count}")(processedMetrics)
+      case "akka.actor.processing-time" => addMetric(s"akka.actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.processing.time.min=${min},actor.processing.time.max=${max},actor.processing.time.sum=${sum},actor.processing.time.count=${count}")(processedMetrics)
+      case "akka.actor.mailbox-size" => addMetric(s"akka.actor=${getTagOrEmptyString(metric.tags, "path")}", s"actor.mailbox.size.sum=${sum},actor.mailbox.size.count=${count}")(processedMetrics)
 
-      case "akka.router.routing-time" =>  addMetric(s"router=${getTagOrEmptyString(metric.tags, "name")}", s"router.routing.time.min=${min},router.routing.time.max=${max},router.routing.time.sum=${sum},router.routing.time.count=${count}")(processedMetrics)
-      case "akka.router.time-in-mailbox" =>  addMetric(s"router=${getTagOrEmptyString(metric.tags, "name")}", s"router.mailbox.time.min=${min},router.mailbox.time.max=${max},router.mailbox.time.sum=${sum},router.mailbox.time.count=${count}")(processedMetrics)
-      case "akka.router.processing-time" =>  addMetric(s"router=${getTagOrEmptyString(metric.tags, "name")}", s"router.processing.time.min=${min},router.processing.time.max=${max},router.processing.time.sum=${sum},router.processing.time.count=${count}")(processedMetrics)
+      case "akka.router.routing-time" =>  addMetric(s"akka.router=${getTagOrEmptyString(metric.tags, "name")}", s"router.routing.time.min=${min},router.routing.time.max=${max},router.routing.time.sum=${sum},router.routing.time.count=${count}")(processedMetrics)
+      case "akka.router.time-in-mailbox" =>  addMetric(s"akka.router=${getTagOrEmptyString(metric.tags, "name")}", s"router.mailbox.time.min=${min},router.mailbox.time.max=${max},router.mailbox.time.sum=${sum},router.mailbox.time.count=${count}")(processedMetrics)
+      case "akka.router.processing-time" =>  addMetric(s"akka.router=${getTagOrEmptyString(metric.tags, "name")}", s"router.processing.time.min=${min},router.processing.time.max=${max},router.processing.time.sum=${sum},router.processing.time.count=${count}")(processedMetrics)
 
       case "executor.queue" => addMetric(DEFAULT_DIM, s"dispatcher.fj.tasks.queued=${max}")(processedMetrics)
 
@@ -306,14 +306,14 @@ class SPMReporter extends MetricReporter {
           case _ => ""
         }
       }
-      case "jvm.gc" => addMetric(s"gc=${getTagOrEmptyString(metric.tags, "collector")}", s"jvm.gc.collection.time=${sum}")(processedMetrics)
-      case "jvm.gc.promotion" => addMetric(s"gc=${getTagOrEmptyString(metric.tags, "space")}", s"jvm.gc.collection.count=${sum}")(processedMetrics)
+      case "jvm.gc" => addMetric(s"akka.gc=${getTagOrEmptyString(metric.tags, "collector")}", s"jvm.gc.collection.time=${sum}")(processedMetrics)
+      case "jvm.gc.promotion" => addMetric(s"akka.gc=${getTagOrEmptyString(metric.tags, "space")}", s"jvm.gc.collection.count=${sum}")(processedMetrics)
 
-      case "jvm.memory" => addMetric(DEFAULT_DIM, s"jvm.${getTagOrEmptyString(metric.tags, "segment")}.${getTagOrEmptyString(metric.tags, "measure")}.sum=${sum},jvm.${getTagOrEmptyString(metric.tags, "segment")}.${getTagOrEmptyString(metric.tags, "measure")}.count=${count}")(processedMetrics)
+      case "jvm.memory" => addMetric(DEFAULT_DIM, s"jvm.${getTagOrEmptyString(metric.tags, "segment", true)}.${getTagOrEmptyString(metric.tags, "measure", true)}.sum=${sum},jvm.${getTagOrEmptyString(metric.tags, "segment", true)}.${getTagOrEmptyString(metric.tags, "measure", true)}.count=${count}")(processedMetrics)
       case "span.processing-time" => {
         getTagOrEmptyString(metric.tags, "error") match {
-          case "false" => addMetric(s"trace=${getTagOrEmptyString(metric.tags, "operation")}", s"tracing.requests.time.min=${min},tracing.requests.time.max=${max},tracing.requests.time.sum=${sum},tracing.requests.time.count=${count}")(processedMetrics)
-          case "true" => addMetric(s"trace=${getTagOrEmptyString(metric.tags, "operation")}", s"tracing.requests.errors=${count}")(processedMetrics)
+          case "false" => addMetric(s"akka.trace=${getTagOrEmptyString(metric.tags, "operation")}", s"tracing.requests.time.min=${min},tracing.requests.time.max=${max},tracing.requests.time.sum=${sum},tracing.requests.time.count=${count}")(processedMetrics)
+          case "true" => addMetric(s"akka.trace=${getTagOrEmptyString(metric.tags, "operation")}", s"tracing.requests.errors=${count}")(processedMetrics)
           case _ => ""
         }
       }
@@ -403,9 +403,13 @@ class SPMReporter extends MetricReporter {
     }
   }
 
-  private def getTagOrEmptyString(tags: Map[String, String], tagname: String): String = {
+  private def getTagOrEmptyString(tags: Map[String, String], tagname: String, replaceDash: Boolean = false): String = {
     if (tags.contains(tagname)) {
-      tags.get(tagname).get
+      if (replaceDash) {
+        tags.get(tagname).get.replace("-","")
+      } else {
+        tags.get(tagname).get
+      }
     } else {
       ""
     }
